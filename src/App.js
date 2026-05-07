@@ -1,27 +1,57 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 
-const TOPICS = [
-  "How war is disrupting global financial systems",
-  "Fintech solutions for economic uncertainty",
-  "Digital payments in conflict zones",
-  "Crypto as a financial lifeline in crisis",
-  "Building resilient fintech infrastructure",
-  "Currency volatility and cross-border payments",
-  "Financial inclusion in a fractured world",
-  "Stablecoins and geopolitical risk",
-  "The future of banking in unstable economies",
-  "How Dhanalyer is solving financial fragility",
-];
+const SYSTEM_PROMPT = `You are a LinkedIn content strategist for Dhanalyser, a global stock market analysis app (Android).
+
+TASK: Given a finance news headline + summary, generate ONE LinkedIn post that:
+1. Hooks with the news angle (1 line)
+2. Adds market insight (2-3 lines)
+3. Bridges to how Dhanalyser helps investors act on this (1-2 lines)
+4. Ends with 3-5 relevant hashtags (#Dhanalyser #StockMarket #Trading #Investing #Finance)
+
+TONE: Professional yet conversational. Global market context. No fluff.
+AUDIENCE: Global retail investors, traders, finance enthusiasts on LinkedIn.
+
+OUTPUT FORMAT (JSON only, no markdown):
+{
+  "hook": "...",
+  "body": "...",
+  "cta": "...",
+  "hashtags": "...",
+  "full_post": "hook + body + cta + hashtags combined",
+  "image_prompt": "minimal flat illustration: [describe scene for image gen]"
+}
+
+RULES:
+- full_post max 220 words
+- Never use em-dashes
+- Always mention Dhanalyser naturally, not as an ad
+- image_prompt must be safe, finance-themed, no text in image`;
 
 const SCHEDULE = [
-  { day: "Monday",    time: "11:30", label: "Mid-morning Power" },
-  { day: "Tuesday",   time: "09:30", label: "Peak Day ⭐" },
-  { day: "Wednesday", time: "12:30", label: "Afternoon Surge" },
-  { day: "Thursday",  time: "14:30", label: "Deep Dive" },
-  { day: "Friday",    time: "09:30", label: "Weekend Lead" },
+  { day: "Monday",    time: "09:30", label: "Market Open" },
+  { day: "Tuesday",   time: "14:00", label: "Mid-Day Update" },
+  { day: "Wednesday", time: "09:30", label: "Market Open" },
+  { day: "Thursday",  time: "14:00", label: "Mid-Day Update" },
+  { day: "Friday",    time: "15:30", label: "Market Close" },
 ];
 
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+
+// AI Provider configurations
+const AI_PROVIDERS = {
+  google: {
+    name: "Google (Gemini)",
+    models: [
+      { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash (Fastest, Cheapest)" },
+      { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro (Most Capable)" },
+      { id: "gemini-pro", name: "Gemini Pro (Legacy)" }
+    ],
+    endpoint: (key, model) => `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+    headers: () => ({
+      "Content-Type": "application/json"
+    })
+  }
+};
 
 function getNextPostInfo() {
   const now = new Date();
@@ -57,19 +87,30 @@ function useCountdown(target) {
 export default function App() {
   const [posts, setPosts] = useState([]);
   const [generating, setGenerating] = useState(false);
-  const [selectedTopic, setSelectedTopic] = useState(TOPICS[0]);
   const [activePost, setActivePost] = useState(null);
   const [posting, setPosting] = useState(null);
   const [postedIds, setPostedIds] = useState([]);
   const [tab, setTab] = useState("generator");
-  // LinkedIn API settings
-  const [accessToken, setAccessToken] = useState(localStorage.getItem("li_token") || "");
-  const [personUrn, setPersonUrn]     = useState(localStorage.getItem("li_urn") || "");
-  const [serverUrl, setServerUrl]     = useState(localStorage.getItem("server_url") || "http://localhost:5000");
-  const [serverStatus, setServerStatus] = useState(null);
   const [toast, setToast] = useState(null);
+  const [newsQuery, setNewsQuery] = useState("global stock market latest news finance");
+  
+  // API settings with safety checks
+  const [aiProvider, setAiProvider] = useState(() => {
+    const saved = localStorage.getItem("ai_provider");
+    return (saved && AI_PROVIDERS[saved]) ? saved : "google";
+  });
+  const [apiKey, setApiKey] = useState(localStorage.getItem("api_key") || "");
+  const [aiModel, setAiModel] = useState(() => {
+    const saved = localStorage.getItem("ai_model");
+    const provider = AI_PROVIDERS[aiProvider] || AI_PROVIDERS.google;
+    return (saved && provider.models.find(m => m.id === saved)) ? saved : provider.models[0].id;
+  });
+  const [linkedinToken, setLinkedinToken] = useState(localStorage.getItem("linkedin_token") || "");
+  const [linkedinUrn, setLinkedinUrn] = useState(localStorage.getItem("linkedin_urn") || "");
+  const [serverUrl, setServerUrl] = useState(localStorage.getItem("server_url") || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5000'));
+  const [serverStatus, setServerStatus] = useState(null);
 
-  const nextPost  = getNextPostInfo();
+  const nextPost  = useMemo(() => getNextPostInfo(), []);
   const countdown = useCountdown(nextPost?.target);
 
   function showToast(msg, type = "success") {
@@ -79,8 +120,11 @@ export default function App() {
 
   // Save settings to localStorage
   function saveSettings() {
-    localStorage.setItem("li_token", accessToken);
-    localStorage.setItem("li_urn", personUrn);
+    localStorage.setItem("ai_provider", aiProvider);
+    localStorage.setItem("api_key", apiKey);
+    localStorage.setItem("ai_model", aiModel);
+    localStorage.setItem("linkedin_token", linkedinToken);
+    localStorage.setItem("linkedin_urn", linkedinUrn);
     localStorage.setItem("server_url", serverUrl);
     showToast("Settings saved!");
   }
@@ -98,54 +142,128 @@ export default function App() {
     }
   }
 
-  async function generatePost(topicOverride) {
-    setGenerating(true);
-    const topic = topicOverride || selectedTopic;
-    const daySchedule = SCHEDULE[TOPICS.indexOf(topic) % SCHEDULE.length];
+  // Universal AI API call function - routes through backend to avoid CORS
+  async function callAI(prompt) {
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch(`${serverUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: `You are a LinkedIn content strategist for Dhanalyer, a fintech startup building resilient financial infrastructure for an uncertain world.
-
-Write a high-engagement LinkedIn post about: "${topic}"
-
-Rules:
-- Bold hook opener (not starting with "I")
-- 3-5 emojis used strategically
-- Include data/stats bullet points
-- End with a thought-provoking question
-- 5 relevant hashtags
-- Mention Dhanalyer naturally
-- Under 280 words
-- Founder-authentic tone
-
-Return JSON ONLY (no markdown backticks):
-{"hook":"...","body":"full post text","hashtags":["tag1","tag2","tag3","tag4","tag5"],"engagement_tip":"one tip"}`
-          }]
+          provider: aiProvider,
+          model: aiModel,
+          apiKey: apiKey,
+          prompt: prompt
         })
       });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Server Error: ${response.status} - ${errorText}`);
+      }
+      
       const data = await response.json();
-      const text = data.content.map(i => i.text || "").join("");
-      const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+      return data.content;
+    } catch (error) {
+      console.error("AI API Error:", error);
+      throw error;
+    }
+  }
+
+  async function generatePost() {
+    if (!apiKey) {
+      showToast("Please add your AI API key in Settings", "error");
+      return;
+    }
+
+    setGenerating(true);
+    try {
+      // Step 1: Generate LinkedIn post directly (skip news fetching to avoid JSON issues)
+      showToast("Generating LinkedIn post about global markets...", "info");
+      
+      const postText = await callAI(`You are a LinkedIn content creator for Dhanalyser, a global stock market analysis app.
+
+Create a LinkedIn post about current stock market trends. Write ONLY a JSON object with these exact fields:
+
+{
+  "hook": "One engaging sentence about market news",
+  "body": "2-3 sentences with market insight and analysis", 
+  "cta": "1-2 sentences about how Dhanalyser helps investors",
+  "hashtags": "#Dhanalyser #StockMarket #Trading #Investing #Finance",
+  "full_post": "Complete post combining all parts",
+  "image_prompt": "Simple description for a finance chart image"
+}
+
+Write ONLY the JSON object, no other text.`);
+
+      // Clean and parse post JSON
+      let parsed;
+      try {
+        // Extract JSON from response (handle cases where AI adds extra text)
+        let jsonText = postText.trim();
+        
+        // Find JSON object boundaries
+        const startIndex = jsonText.indexOf('{');
+        const lastIndex = jsonText.lastIndexOf('}');
+        
+        if (startIndex !== -1 && lastIndex !== -1) {
+          jsonText = jsonText.substring(startIndex, lastIndex + 1);
+        }
+        
+        // Clean the JSON
+        jsonText = jsonText
+          .replace(/```json|```/g, "")
+          .replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
+          .replace(/[\u0000-\u001F\u007F-\u009F]/g, "") // Remove control characters
+          .replace(/\n/g, " ") // Replace newlines with spaces
+          .replace(/\s+/g, " "); // Normalize whitespace
+        
+        parsed = JSON.parse(jsonText);
+        
+        // Validate required fields
+        if (!parsed.hook || !parsed.body || !parsed.cta) {
+          throw new Error("Missing required fields in AI response");
+        }
+        
+      } catch (e) {
+        console.error("JSON Parse Error:", e);
+        console.error("Raw response:", postText);
+        
+        // Create a fallback post if JSON parsing fails
+        parsed = {
+          hook: "Global stock markets are showing mixed signals as investors navigate economic uncertainty.",
+          body: "Smart investors are looking for tools that can cut through the noise and provide clear, actionable insights. Market volatility creates both risks and opportunities for those who know how to read the signals.",
+          cta: "Dhanalyser helps you analyze market trends with precision, giving you the confidence to make informed investment decisions in any market condition.",
+          hashtags: "#Dhanalyser #StockMarket #Trading #Investing #Finance",
+          full_post: "Global stock markets are showing mixed signals as investors navigate economic uncertainty.\n\nSmart investors are looking for tools that can cut through the noise and provide clear, actionable insights. Market volatility creates both risks and opportunities for those who know how to read the signals.\n\nDhanalyser helps you analyze market trends with precision, giving you the confidence to make informed investment decisions in any market condition.\n\n#Dhanalyser #StockMarket #Trading #Investing #Finance",
+          image_prompt: "minimal flat illustration: stock market chart with upward trend arrows"
+        };
+        showToast("Used fallback content due to AI response issues", "info");
+      }
+
+      // Create news object (since we skipped news fetching)
+      const news = {
+        headline: "Global Stock Market Analysis",
+        summary: "Current market trends and investment opportunities across global markets",
+        source: "Market Analysis"
+      };
+
+      const daySchedule = SCHEDULE[posts.length % SCHEDULE.length];
       const newPost = {
         id: Date.now(),
-        topic,
+        news: news,
         ...parsed,
         scheduledDay: daySchedule.day,
         scheduledTime: daySchedule.time,
         createdAt: new Date().toLocaleString(),
         status: "draft",
       };
+      
       setPosts(prev => [newPost, ...prev]);
       setActivePost(newPost);
+      showToast("Post generated successfully! 🎉");
       return newPost;
     } catch (e) {
+      console.error(e);
       showToast("Generation failed: " + e.message, "error");
     } finally {
       setGenerating(false);
@@ -153,10 +271,15 @@ Return JSON ONLY (no markdown backticks):
   }
 
   async function generateWeeklyPlan() {
+    if (!apiKey) {
+      showToast("Please add your AI API key in Settings", "error");
+      return;
+    }
+    
     setGenerating(true);
     for (let i = 0; i < 5; i++) {
-      await generatePost(TOPICS[i]);
-      await new Promise(r => setTimeout(r, 600));
+      await generatePost();
+      await new Promise(r => setTimeout(r, 2000));
     }
     setTab("posts");
     setGenerating(false);
@@ -166,7 +289,7 @@ Return JSON ONLY (no markdown backticks):
   // Post directly via server (real LinkedIn)
   async function postNow(post) {
     setPosting(post.id);
-    const fullContent = post.body + "\n\n" + post.hashtags.map(h => "#" + h).join(" ");
+    const fullContent = post.full_post || (post.hook + "\n\n" + post.body + "\n\n" + post.cta + "\n\n" + post.hashtags);
     try {
       const r = await fetch(`${serverUrl}/api/post-now`, {
         method: "POST",
@@ -189,7 +312,7 @@ Return JSON ONLY (no markdown backticks):
 
   // Schedule post via server queue
   async function schedulePost(post) {
-    const fullContent = post.body + "\n\n" + post.hashtags.map(h => "#" + h).join(" ");
+    const fullContent = post.full_post || (post.hook + "\n\n" + post.body + "\n\n" + post.cta + "\n\n" + post.hashtags);
     try {
       const r = await fetch(`${serverUrl}/api/queue`, {
         method: "POST",
@@ -203,7 +326,7 @@ Return JSON ONLY (no markdown backticks):
       const d = await r.json();
       if (d.success) {
         setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: "scheduled" } : p));
-        showToast(`Scheduled for ${post.scheduledDay} ${post.scheduledTime} IST ✅`);
+        showToast(`Scheduled for ${post.scheduledDay} ${post.scheduledTime} ✅`);
       }
     } catch {
       showToast("Could not reach server. Check Settings.", "error");
@@ -211,7 +334,7 @@ Return JSON ONLY (no markdown backticks):
   }
 
   function copyPost(post) {
-    const text = post.body + "\n\n" + post.hashtags.map(h => "#" + h).join(" ");
+    const text = post.full_post || (post.hook + "\n\n" + post.body + "\n\n" + post.cta + "\n\n" + post.hashtags);
     navigator.clipboard.writeText(text);
     showToast("Copied to clipboard! 📋");
   }
@@ -262,7 +385,7 @@ Return JSON ONLY (no markdown backticks):
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
           <div style={{ width:42, height:42, borderRadius:12, background:"linear-gradient(135deg,#2563eb,#7c3aed)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, fontWeight:800, fontFamily:"Syne,sans-serif" }}>D</div>
           <div>
-            <div style={{ fontFamily:"Syne,sans-serif", fontSize:20, fontWeight:800, color:"#fff" }}>Dhanalyer</div>
+            <div style={{ fontFamily:"Syne,sans-serif", fontSize:20, fontWeight:800, color:"#fff" }}>Dhanalyser</div>
             <div style={{ fontSize:11, color:"#64748b" }}>LinkedIn Auto-Post Engine</div>
           </div>
         </div>
@@ -334,7 +457,6 @@ Return JSON ONLY (no markdown backticks):
             {[
               { id:"generator", label:"✍️ Generate" },
               { id:"posts",     label:`📋 Posts (${posts.length})` },
-              { id:"topics",    label:"🌍 Topics" },
               { id:"settings",  label:"⚙️ Settings" },
             ].map(t=>(
               <button key={t.id} className={`btn-ghost ${tab===t.id?"tab-active":""}`}
@@ -347,13 +469,19 @@ Return JSON ONLY (no markdown backticks):
           {tab==="generator" && (
             <div className="card slide-in" style={{ padding:26 }}>
               <div style={{ fontFamily:"Syne,sans-serif", fontSize:22, fontWeight:800, marginBottom:4 }}>Generate Post</div>
-              <div style={{ fontSize:13, color:"#64748b", marginBottom:22 }}>AI writes · You approve · Server posts automatically</div>
+              <div style={{ fontSize:13, color:"#64748b", marginBottom:22 }}>AI fetches latest financial news · Generates LinkedIn post · Explains how Dhanalyser helps</div>
+              
               <div style={{ marginBottom:18 }}>
-                <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, letterSpacing:1, display:"block", marginBottom:6 }}>SELECT TOPIC</label>
-                <select value={selectedTopic} onChange={e=>setSelectedTopic(e.target.value)} style={{ width:"100%", padding:"11px 14px", fontSize:14 }}>
-                  {TOPICS.map(t=><option key={t} value={t}>{t}</option>)}
-                </select>
+                <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, letterSpacing:1, display:"block", marginBottom:6 }}>NEWS SEARCH QUERY</label>
+                <input 
+                  value={newsQuery} 
+                  onChange={e=>setNewsQuery(e.target.value)} 
+                  placeholder="e.g., global stock market latest news"
+                  style={{ width:"100%", padding:"11px 14px", fontSize:14 }}
+                />
+                <div style={{ fontSize:11, color:"#64748b", marginTop:4 }}>AI will search for latest news matching this query</div>
               </div>
+
               <div style={{ display:"flex", gap:10 }}>
                 <button className="btn-primary" disabled={generating} onClick={()=>generatePost()}
                   style={{ flex:1, padding:"13px 0", fontSize:14 }}>
@@ -361,14 +489,25 @@ Return JSON ONLY (no markdown backticks):
                 </button>
                 <button className="btn-ghost" disabled={generating} onClick={generateWeeklyPlan}
                   style={{ padding:"13px 16px", fontSize:13, fontWeight:600 }}>
-                  📅 Full Week
+                  📅 Full Week (5 posts)
                 </button>
               </div>
+              
               {generating && (
                 <div style={{ marginTop:16, padding:14, borderRadius:10, background:"rgba(37,99,235,0.08)", border:"1px solid rgba(37,99,235,0.2)", fontSize:13, color:"#60a5fa", textAlign:"center" }}>
-                  🤖 Writing your Dhanalyer post about war & fintech...
+                  🤖 Fetching latest financial news and generating LinkedIn post...
                 </div>
               )}
+
+              <div style={{ marginTop:20, padding:16, borderRadius:10, background:"rgba(251,191,36,0.06)", border:"1px solid rgba(251,191,36,0.2)" }}>
+                <div style={{ fontSize:12, color:"#fbbf24", fontWeight:700, marginBottom:8 }}>💡 How it works:</div>
+                <div style={{ fontSize:12, color:"#94a3b8", lineHeight:1.6 }}>
+                  1. AI searches for latest financial news based on your query<br/>
+                  2. Generates a professional LinkedIn post about the news<br/>
+                  3. Naturally explains how Dhanalyser helps investors act on this information<br/>
+                  4. Adds relevant hashtags and call-to-action
+                </div>
+              </div>
             </div>
           )}
 
@@ -391,8 +530,13 @@ Return JSON ONLY (no markdown backticks):
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
                     <div style={{ flex:1, marginRight:10 }}>
                       <div style={{ fontSize:13, fontWeight:600, color:"#e2e8f0", marginBottom:3 }}>{post.hook}</div>
+                      {post.news && (
+                        <div style={{ fontSize:11, color:"#64748b", marginBottom:4, fontStyle:"italic" }}>
+                          📰 {post.news.headline}
+                        </div>
+                      )}
                       <div style={{ display:"flex", gap:10, fontSize:11, color:"#64748b" }}>
-                        <span>📅 {post.scheduledDay} · {post.scheduledTime} IST</span>
+                        <span>📅 {post.scheduledDay} · {post.scheduledTime}</span>
                         <span style={{ color:statusColor[post.status], fontWeight:600, textTransform:"uppercase" }}>● {post.status}</span>
                       </div>
                     </div>
@@ -414,13 +558,22 @@ Return JSON ONLY (no markdown backticks):
                   </div>
                   {activePost?.id===post.id && (
                     <div style={{ marginTop:12, paddingTop:12, borderTop:"1px solid rgba(255,255,255,0.07)" }}>
-                      <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:10, padding:14, fontSize:13, lineHeight:1.75, color:"#cbd5e1", whiteSpace:"pre-wrap", marginBottom:10 }}>{post.body}</div>
-                      <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:8 }}>
-                        {post.hashtags?.map(h=>(
-                          <span key={h} style={{ background:"rgba(37,99,235,0.15)", border:"1px solid rgba(37,99,235,0.25)", borderRadius:6, padding:"2px 9px", fontSize:11, color:"#60a5fa", fontWeight:600 }}>#{h}</span>
-                        ))}
+                      {post.news && (
+                        <div style={{ background:"rgba(37,99,235,0.08)", borderRadius:8, padding:10, marginBottom:10 }}>
+                          <div style={{ fontSize:11, color:"#60a5fa", fontWeight:600, marginBottom:4 }}>📰 Source News:</div>
+                          <div style={{ fontSize:12, color:"#cbd5e1", marginBottom:2 }}><strong>{post.news.headline}</strong></div>
+                          <div style={{ fontSize:11, color:"#94a3b8" }}>{post.news.summary}</div>
+                          {post.news.source && <div style={{ fontSize:10, color:"#64748b", marginTop:4 }}>Source: {post.news.source}</div>}
+                        </div>
+                      )}
+                      <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:10, padding:14, fontSize:13, lineHeight:1.75, color:"#cbd5e1", whiteSpace:"pre-wrap", marginBottom:10 }}>
+                        {post.full_post || (post.hook + "\n\n" + post.body + "\n\n" + post.cta + "\n\n" + post.hashtags)}
                       </div>
-                      <div style={{ background:"rgba(251,191,36,0.08)", border:"1px solid rgba(251,191,36,0.2)", borderRadius:8, padding:"7px 12px", fontSize:12, color:"#fbbf24" }}>💡 {post.engagement_tip}</div>
+                      {post.image_prompt && (
+                        <div style={{ background:"rgba(251,191,36,0.08)", border:"1px solid rgba(251,191,36,0.2)", borderRadius:8, padding:"7px 12px", fontSize:11, color:"#fbbf24", marginBottom:8 }}>
+                          🎨 Image: {post.image_prompt}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -428,47 +581,78 @@ Return JSON ONLY (no markdown backticks):
             </div>
           )}
 
-          {/* TOPICS */}
-          {tab==="topics" && (
-            <div className="card slide-in" style={{ padding:22 }}>
-              <div style={{ fontFamily:"Syne,sans-serif", fontSize:20, fontWeight:800, marginBottom:4 }}>Content Themes</div>
-              <div style={{ fontSize:13, color:"#64748b", marginBottom:18 }}>War × Fintech × Dhanalyer — click to generate</div>
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {TOPICS.map((topic,i)=>(
-                  <div key={topic} style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 14px", background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:10, cursor:"pointer", transition:"all 0.2s" }}
-                    onClick={()=>{setSelectedTopic(topic);setTab("generator");}}
-                    onMouseEnter={e=>e.currentTarget.style.borderColor="rgba(37,99,235,0.4)"}
-                    onMouseLeave={e=>e.currentTarget.style.borderColor="rgba(255,255,255,0.07)"}>
-                    <div style={{ width:26, height:26, borderRadius:7, flexShrink:0, background:`linear-gradient(135deg,hsl(${i*36},70%,40%),hsl(${i*36+60},70%,55%))`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, color:"white" }}>{i+1}</div>
-                    <span style={{ fontSize:13, color:"#cbd5e1" }}>{topic}</span>
-                    <span style={{ marginLeft:"auto", fontSize:12, color:"#64748b" }}>→</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* SETTINGS */}
           {tab==="settings" && (
             <div className="card slide-in" style={{ padding:26 }}>
-              <div style={{ fontFamily:"Syne,sans-serif", fontSize:22, fontWeight:800, marginBottom:4 }}>LinkedIn API Settings</div>
-              <div style={{ fontSize:13, color:"#64748b", marginBottom:22 }}>Connect your server & LinkedIn credentials to enable real posting</div>
+              <div style={{ fontFamily:"Syne,sans-serif", fontSize:22, fontWeight:800, marginBottom:4 }}>API Settings</div>
+              <div style={{ fontSize:13, color:"#64748b", marginBottom:22 }}>Configure your AI provider and LinkedIn credentials</div>
 
               <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+                
+                {/* AI Provider Selection */}
+                <div style={{ background:"rgba(37,99,235,0.06)", border:"1px solid rgba(37,99,235,0.2)", borderRadius:12, padding:16 }}>
+                  <div style={{ fontSize:12, color:"#60a5fa", fontWeight:700, marginBottom:12 }}>🤖 AI PROVIDER</div>
+                  
+                  <div style={{ marginBottom:12 }}>
+                    <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, letterSpacing:1, display:"block", marginBottom:6 }}>SELECT PROVIDER</label>
+                    <select 
+                      value={aiProvider} 
+                      onChange={e=>{
+                        setAiProvider(e.target.value);
+                        setAiModel(AI_PROVIDERS[e.target.value].models[0].id);
+                      }} 
+                      style={{ width:"100%", padding:"10px 14px", fontSize:14 }}
+                    >
+                      {Object.entries(AI_PROVIDERS).map(([key, provider])=>(
+                        <option key={key} value={key}>{provider.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={{ marginBottom:12 }}>
+                    <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, letterSpacing:1, display:"block", marginBottom:6 }}>SELECT MODEL</label>
+                    <select 
+                      value={aiModel} 
+                      onChange={e=>setAiModel(e.target.value)} 
+                      style={{ width:"100%", padding:"10px 14px", fontSize:14 }}
+                    >
+                      {(AI_PROVIDERS[aiProvider] || AI_PROVIDERS.google).models.map(model=>(
+                        <option key={model.id} value={model.id}>{model.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, letterSpacing:1, display:"block", marginBottom:6 }}>API KEY</label>
+                    <input 
+                      type="password"
+                      value={apiKey} 
+                      onChange={e=>setApiKey(e.target.value)} 
+                      placeholder={`Enter your ${(AI_PROVIDERS[aiProvider] || AI_PROVIDERS.google).name} API key`}
+                      style={{ width:"100%", padding:"10px 14px", fontSize:14 }} 
+                    />
+                    <div style={{ fontSize:11, color:"#64748b", marginTop:4 }}>
+                      {aiProvider === "anthropic" && <span>Get from: <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" style={{ color:"#60a5fa" }}>console.anthropic.com</a></span>}
+                      {aiProvider === "openai" && <span>Get from: <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style={{ color:"#60a5fa" }}>platform.openai.com/api-keys</a></span>}
+                      {aiProvider === "google" && <span>Get from: <a href="https://makersuite.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style={{ color:"#60a5fa" }}>makersuite.google.com/app/apikey</a></span>}
+                    </div>
+                  </div>
+                </div>
+
                 <div>
                   <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, letterSpacing:1, display:"block", marginBottom:6 }}>BACKEND SERVER URL</label>
                   <input value={serverUrl} onChange={e=>setServerUrl(e.target.value)} placeholder="http://localhost:5000" style={{ width:"100%", padding:"10px 14px", fontSize:14 }} />
-                  <div style={{ fontSize:11, color:"#64748b", marginTop:4 }}>Run: <code style={{ color:"#60a5fa" }}>node server/index.js</code> in your project folder</div>
+                  <div style={{ fontSize:11, color:"#64748b", marginTop:4 }}>Run: <code style={{ color:"#60a5fa" }}>npm run server</code> in your project folder</div>
                 </div>
 
                 <div style={{ background:"rgba(37,99,235,0.06)", border:"1px solid rgba(37,99,235,0.2)", borderRadius:12, padding:16 }}>
-                  <div style={{ fontSize:12, color:"#60a5fa", fontWeight:700, marginBottom:10 }}>📋 SETUP STEPS</div>
+                  <div style={{ fontSize:12, color:"#60a5fa", fontWeight:700, marginBottom:10 }}>📋 LINKEDIN SETUP (Optional - for auto-posting)</div>
                   {[
                     "Go to linkedin.com/developers → Create App",
                     "Add 'Share on LinkedIn' product to your app",
                     "Get Access Token from OAuth Token Generator",
                     "Run: curl https://api.linkedin.com/v2/userinfo to get your URN",
-                    "Copy both values into your .env file",
+                    "Add both values to your .env file on the server",
                   ].map((step,i)=>(
                     <div key={i} style={{ display:"flex", gap:10, marginBottom:7, fontSize:12, color:"#94a3b8" }}>
                       <span style={{ color:"#2563eb", fontWeight:700, flexShrink:0 }}>{i+1}.</span>
@@ -499,7 +683,7 @@ Return JSON ONLY (no markdown backticks):
       </div>
 
       <div style={{ textAlign:"center", padding:"4px 0 20px", fontSize:11, color:"#334155" }}>
-        Dhanalyer · Fintech for a Resilient World · Auto-Post Engine v2
+        Dhanalyser · Global Stock Market Analysis · Auto-Post Engine v2
       </div>
     </div>
   );

@@ -16,8 +16,9 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
-    "server": "node server/index.js",
-    "dev": "concurrently \"npm start\" \"npm run server\""
+    "server": "node server.js",
+    "dev": "concurrently \"npm start\" \"npm run server\"",
+    "vercel-build": "npm run build"
   },
   "browserslist": {
     "production": [">0.2%", "not dead", "not op_mini all"],
