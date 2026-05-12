@@ -1,31 +1,68 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 
-const SYSTEM_PROMPT = `You are a LinkedIn content strategist for Dhanalyser, a global stock market analysis app (Android).
+const SYSTEM_PROMPT = `You are a LinkedIn content agent for Dhanalyser — an AI-powered stock market analysis and portfolio tracking app for Indian retail investors, live on Google Play Store, built by founder Santhosh from Bengaluru.
 
-TASK: Given a finance news headline + summary, generate ONE LinkedIn post that:
-1. Hooks with the news angle (1 line)
-2. Adds market insight (2-3 lines)
-3. Bridges to how Dhanalyser helps investors act on this (1-2 lines)
-4. Ends with 3-5 relevant hashtags (#Dhanalyser #StockMarket #Trading #Investing #Finance)
+YOUR CORE JOB: Search for the latest global financial news happening right now. Then write a LinkedIn post showing exactly how Dhanalyser helps Indian retail investors navigate that news — turning world events into smart investing decisions.
 
-TONE: Professional yet conversational. Global market context. No fluff.
-AUDIENCE: Global retail investors, traders, finance enthusiasts on LinkedIn.
+STEP 1 — FIND THE NEWS:
+Search for the most recent and relevant financial news from today. Pick ONE from these categories:
+- Global market movements (US Fed, Dollar index, crude oil, gold prices)
+- Indian market news (Nifty, Sensex, RBI policy, SEBI updates)
+- Sector-specific news (IT, banking, pharma, EV, infra)
+- Geopolitical events affecting markets (trade wars, sanctions, elections)
+- Corporate earnings or big company announcements (Indian or global)
 
-OUTPUT FORMAT (JSON only, no markdown):
+STEP 2 — CONNECT IT TO DHANALYSER:
+Show how Dhanalyser solves the investor's confusion around this news:
+- AI News Feed → summarises and explains what this news means in plain language
+- Real-time NSE/BSE Data → shows live price impact on Indian stocks instantly
+- Community Feature → lets investors discuss this news, share watchlists, post ideas, and get peer perspectives inside the app
+- Portfolio P&L Tracker → shows exactly how this news is hitting the user's own portfolio in real time
+- Push Notifications → alerts investors the moment this news moves their stocks
+
+STEP 3 — WRITE THE LINKEDIN POST:
+
+Structure (always follow this with ONLY emojis, NO text labels):
+
+📰 [1 line — state the breaking news or trend powerfully]
+
+😟 [1-2 lines — what the average Indian retail investor feels/fears about this news]
+
+💡 [2-3 lines — exactly how Dhanalyser turns this confusion into clarity with specific features]
+
+🚀 [1 line — big picture, inspirational]
+
+📲 [1 line — download, comment, or follow]
+
+[6-8 hashtags mixing Indian finance + global + startup]
+
+TONE RULES:
+- Sound like a founder who reads the news every morning and built a solution
+- Urgent but calm — not fear-mongering, not hype
+- Always India-first lens — connect global news to NSE/BSE/Indian investor impact
+- Use simple English — a 22-year-old first-time investor must understand it
+- Sprinkle 1-2 Hindi/Sanskrit words naturally (Nivesh, Dhan, Bazaar) when it fits
+- Never sound like an advertisement — sound like genuine founder insight
+
+LENGTH: 180-230 words. No more, no less.
+
+OUTPUT FORMAT (JSON only):
 {
-  "hook": "...",
-  "body": "...",
-  "cta": "...",
-  "hashtags": "...",
+  "hook": "📰 ...",
+  "body": "😟 ...\n\n💡 ...",
+  "cta": "🚀 ...\n\n📲 ...",
+  "hashtags": "#Dhanalyser #StockMarket #IndianStocks #Investing #FinTech #RetailInvestors #NSE #BSE",
   "full_post": "hook + body + cta + hashtags combined",
-  "image_prompt": "minimal flat illustration: [describe scene for image gen]"
+  "image_prompt": "minimal flat illustration: [describe scene]"
 }
 
-RULES:
-- full_post max 220 words
-- Never use em-dashes
-- Always mention Dhanalyser naturally, not as an ad
-- image_prompt must be safe, finance-themed, no text in image`;
+IMPORTANT RULES:
+- Always base the post on REAL news from TODAY — never make up news
+- Always mention at least ONE specific Dhanalyser feature by name
+- Always end with the Google Play Store download angle
+- Every post must feel fresh — never repeat the same news or angle twice
+- Use ONLY emojis (📰 😟 💡 🚀 📲), NO text labels like "NEWS HOOK:" or "INVESTOR PAIN:"
+- Keep 180-230 words total`;
 
 const SCHEDULE = [
   { day: "Monday",    time: "09:30", label: "Market Open" },
@@ -36,6 +73,25 @@ const SCHEDULE = [
 ];
 
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+
+// Predefined news search queries
+const NEWS_QUERIES = [
+  "Indian stock market latest news NSE BSE",
+  "Nifty 50 Bank Nifty market trends",
+  "FII DII investment flows India",
+  "Indian IPO market latest updates",
+  "Sensex Nifty technical analysis",
+  "Indian banking sector stocks news",
+  "IT sector stocks India latest",
+  "EV electric vehicle stocks India",
+  "Pharma healthcare stocks India",
+  "Real estate infrastructure stocks India",
+  "FMCG consumer stocks India news",
+  "Indian stock market earnings results",
+  "RBI monetary policy impact stocks",
+  "Global markets impact Indian stocks",
+  "Retail investor trends India"
+];
 
 // AI Provider configurations
 const AI_PROVIDERS = {
@@ -92,6 +148,8 @@ export default function App() {
   const [postedIds, setPostedIds] = useState([]);
   const [tab, setTab] = useState("generator");
   const [toast, setToast] = useState(null);
+  const [editingPost, setEditingPost] = useState(null);
+  const [editContent, setEditContent] = useState({});
   const [newsQuery, setNewsQuery] = useState("global stock market latest news finance");
   
   // API settings with safety checks
@@ -180,18 +238,58 @@ export default function App() {
       // Step 1: Generate LinkedIn post directly (skip news fetching to avoid JSON issues)
       showToast("Generating LinkedIn post about global markets...", "info");
       
-      const postText = await callAI(`You are a LinkedIn content creator for Dhanalyser, a global stock market analysis app.
+      const postText = await callAI(`You are a LinkedIn content agent for Dhanalyser — an AI-powered stock market analysis and portfolio tracking app for Indian retail investors, live on Google Play Store, built by founder Santhosh from Bengaluru.
 
-Create a LinkedIn post about current stock market trends. Write ONLY a JSON object with these exact fields:
+YOUR CORE JOB: Search for the latest global financial news happening right now. Then write a LinkedIn post showing exactly how Dhanalyser helps Indian retail investors navigate that news.
+
+STEP 1 — FIND THE NEWS:
+Pick ONE recent financial news from: Global markets (US Fed, Dollar, crude oil, gold), Indian markets (Nifty, Sensex, RBI, SEBI), Sectors (IT, banking, pharma, EV), Geopolitical events, or Corporate earnings.
+
+STEP 2 — CONNECT TO DHANALYSER FEATURES:
+- AI News Feed → summarises news in plain language
+- Real-time NSE/BSE Data → shows live price impact
+- Community Feature → investors discuss news, share watchlists, post ideas, get peer perspectives
+- Portfolio P&L Tracker → shows how news hits user's portfolio
+- Push Notifications → alerts when news moves stocks
+
+STEP 3 — WRITE THE POST:
+
+Structure (MUST follow exactly with ONLY emojis, NO labels):
+
+📰 [Breaking news in 1 line]
+
+😟 [1-2 lines about what Indian retail investor feels/fears about this news]
+
+💡 [2-3 lines showing exactly how Dhanalyser turns confusion into clarity. Mention specific features like AI News Feed, Community discussions, Portfolio tracker, etc.]
+
+🚀 [1 line big picture, inspirational about building India's smartest investing community]
+
+📲 [1 line download from Google Play Store, join community, or comment]
+
+[6-8 hashtags mixing Indian finance + global + startup]
+
+TONE RULES:
+- Sound like founder Santhosh who reads news and built a solution
+- Urgent but calm — not fear-mongering, not hype
+- India-first lens — connect global news to NSE/BSE impact
+- Simple English — 22-year-old first-time investor must understand
+- Sprinkle 1-2 Hindi/Sanskrit words naturally (Nivesh, Dhan, Bazaar)
+- Never sound like ad — sound like genuine founder insight
+
+LENGTH: 180-230 words. No more, no less.
+
+Write ONLY a JSON object:
 
 {
-  "hook": "One engaging sentence about market news",
-  "body": "2-3 sentences with market insight and analysis", 
-  "cta": "1-2 sentences about how Dhanalyser helps investors",
-  "hashtags": "#Dhanalyser #StockMarket #Trading #Investing #Finance",
-  "full_post": "Complete post combining all parts",
-  "image_prompt": "Simple description for a finance chart image"
+  "hook": "📰 [breaking news in 1 line]",
+  "body": "😟 [1-2 lines about investor fear]\n\n💡 [2-3 lines showing how Dhanalyser helps with specific features]",
+  "cta": "🚀 [1 line inspirational]\n\n📲 [1 line download/join call]",
+  "hashtags": "#Dhanalyser #StockMarket #IndianStocks #Investing #FinTech #RetailInvestors #NSE #BSE",
+  "full_post": "Complete post with all sections combined",
+  "image_prompt": "minimal flat illustration: [finance scene]"
 }
+
+CRITICAL: Use ONLY emojis (📰 😟 💡 🚀 📲), NO text labels like "NEWS HOOK:" or "INVESTOR PAIN:". Mention specific Dhanalyser features. Keep 180-230 words.
 
 Write ONLY the JSON object, no other text.`);
 
@@ -230,21 +328,21 @@ Write ONLY the JSON object, no other text.`);
         
         // Create a fallback post if JSON parsing fails
         parsed = {
-          hook: "Global stock markets are showing mixed signals as investors navigate economic uncertainty.",
-          body: "Smart investors are looking for tools that can cut through the noise and provide clear, actionable insights. Market volatility creates both risks and opportunities for those who know how to read the signals.",
-          cta: "Dhanalyser helps you analyze market trends with precision, giving you the confidence to make informed investment decisions in any market condition.",
-          hashtags: "#Dhanalyser #StockMarket #Trading #Investing #Finance",
-          full_post: "Global stock markets are showing mixed signals as investors navigate economic uncertainty.\n\nSmart investors are looking for tools that can cut through the noise and provide clear, actionable insights. Market volatility creates both risks and opportunities for those who know how to read the signals.\n\nDhanalyser helps you analyze market trends with precision, giving you the confidence to make informed investment decisions in any market condition.\n\n#Dhanalyser #StockMarket #Trading #Investing #Finance",
-          image_prompt: "minimal flat illustration: stock market chart with upward trend arrows"
+          hook: "📰 Nifty 50 hits fresh highs as FII inflows surge—but retail investors are confused about which sectors to bet on.",
+          body: "😟 Most Indian retail investors see the rally but don't know if it's IT, banking, or pharma driving it. They're stuck scrolling WhatsApp groups for tips instead of making data-backed decisions.\n\n💡 Dhanalyser's AI News Feed breaks down exactly which sectors are moving and why. The Community Feature lets you see what experienced investors are discussing in real-time, follow their curated watchlists, and track how this rally impacts your own portfolio with live P&L updates.",
+          cta: "🚀 Building India's smartest investing community—one informed decision at a time.\n\n📲 Download Dhanalyser from Google Play Store and join thousands of Indian investors making smarter Nivesh decisions.",
+          hashtags: "#Dhanalyser #StockMarket #IndianStocks #Investing #FinTech #RetailInvestors #NSE #BSE",
+          full_post: "📰 Nifty 50 hits fresh highs as FII inflows surge—but retail investors are confused about which sectors to bet on.\n\n😟 Most Indian retail investors see the rally but don't know if it's IT, banking, or pharma driving it. They're stuck scrolling WhatsApp groups for tips instead of making data-backed decisions.\n\n💡 Dhanalyser's AI News Feed breaks down exactly which sectors are moving and why. The Community Feature lets you see what experienced investors are discussing in real-time, follow their curated watchlists, and track how this rally impacts your own portfolio with live P&L updates.\n\n🚀 Building India's smartest investing community—one informed decision at a time.\n\n📲 Download Dhanalyser from Google Play Store and join thousands of Indian investors making smarter Nivesh decisions.\n\n#Dhanalyser #StockMarket #IndianStocks #Investing #FinTech #RetailInvestors #NSE #BSE",
+          image_prompt: "minimal flat illustration: Indian investor using mobile app with stock charts, community discussions, and portfolio tracker"
         };
         showToast("Used fallback content due to AI response issues", "info");
       }
 
       // Create news object (since we skipped news fetching)
       const news = {
-        headline: "Global Stock Market Analysis",
-        summary: "Current market trends and investment opportunities across global markets",
-        source: "Market Analysis"
+        headline: "Indian Stock Market & Investing Community",
+        summary: "Building India's smartest investing social network for retail investors",
+        source: "Dhanalyser Community"
       };
 
       const daySchedule = SCHEDULE[posts.length % SCHEDULE.length];
@@ -260,7 +358,11 @@ Write ONLY the JSON object, no other text.`);
       
       setPosts(prev => [newPost, ...prev]);
       setActivePost(newPost);
-      showToast("Post generated successfully! 🎉");
+      
+      // Automatically schedule the post to the server queue for auto-posting
+      await schedulePost(newPost);
+      
+      showToast("Post generated and scheduled for auto-posting! 🎉");
       return newPost;
     } catch (e) {
       console.error(e);
@@ -277,13 +379,15 @@ Write ONLY the JSON object, no other text.`);
     }
     
     setGenerating(true);
+    let successCount = 0;
     for (let i = 0; i < 5; i++) {
-      await generatePost();
+      const post = await generatePost();
+      if (post) successCount++;
       await new Promise(r => setTimeout(r, 2000));
     }
     setTab("posts");
     setGenerating(false);
-    showToast("Full week generated! 🎉");
+    showToast(`${successCount} posts generated and auto-scheduled! 🎉`);
   }
 
   // Post directly via server (real LinkedIn)
@@ -310,7 +414,7 @@ Write ONLY the JSON object, no other text.`);
     setPosting(null);
   }
 
-  // Schedule post via server queue
+  // Schedule post via server queue (for automatic posting at scheduled time)
   async function schedulePost(post) {
     const fullContent = post.full_post || (post.hook + "\n\n" + post.body + "\n\n" + post.cta + "\n\n" + post.hashtags);
     try {
@@ -325,11 +429,13 @@ Write ONLY the JSON object, no other text.`);
       });
       const d = await r.json();
       if (d.success) {
-        setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: "scheduled" } : p));
-        showToast(`Scheduled for ${post.scheduledDay} ${post.scheduledTime} ✅`);
+        setPosts(prev => prev.map(p => p.id === post.id ? { ...p, status: "scheduled", serverQueueId: d.post.id } : p));
+        return true;
       }
-    } catch {
-      showToast("Could not reach server. Check Settings.", "error");
+      return false;
+    } catch (err) {
+      console.error("Schedule error:", err);
+      return false;
     }
   }
 
@@ -337,6 +443,52 @@ Write ONLY the JSON object, no other text.`);
     const text = post.full_post || (post.hook + "\n\n" + post.body + "\n\n" + post.cta + "\n\n" + post.hashtags);
     navigator.clipboard.writeText(text);
     showToast("Copied to clipboard! 📋");
+  }
+
+  function deletePost(postId) {
+    if (window.confirm("Are you sure you want to delete this post?")) {
+      setPosts(prev => prev.filter(p => p.id !== postId));
+      if (activePost?.id === postId) {
+        setActivePost(null);
+      }
+      showToast("Post deleted! 🗑️");
+    }
+  }
+
+  function startEditPost(post) {
+    setEditingPost(post.id);
+    setEditContent({
+      hook: post.hook,
+      body: post.body,
+      cta: post.cta,
+      hashtags: post.hashtags
+    });
+  }
+
+  function cancelEdit() {
+    setEditingPost(null);
+    setEditContent({});
+  }
+
+  function saveEdit(postId) {
+    const updatedFullPost = editContent.hook + "\n\n" + editContent.body + "\n\n" + editContent.cta + "\n\n" + editContent.hashtags;
+    
+    setPosts(prev => prev.map(p => 
+      p.id === postId 
+        ? { 
+            ...p, 
+            hook: editContent.hook,
+            body: editContent.body,
+            cta: editContent.cta,
+            hashtags: editContent.hashtags,
+            full_post: updatedFullPost
+          } 
+        : p
+    ));
+    
+    setEditingPost(null);
+    setEditContent({});
+    showToast("Post updated! ✏️");
   }
 
   const statusColor = { draft: "#94a3b8", scheduled: "#fbbf24", posted: "#22c55e", failed: "#ef4444" };
@@ -473,13 +625,25 @@ Write ONLY the JSON object, no other text.`);
               
               <div style={{ marginBottom:18 }}>
                 <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, letterSpacing:1, display:"block", marginBottom:6 }}>NEWS SEARCH QUERY</label>
+                <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+                  <select 
+                    value={newsQuery}
+                    onChange={e=>setNewsQuery(e.target.value)}
+                    style={{ flex:1, padding:"11px 14px", fontSize:14 }}
+                  >
+                    <option value="">-- Select a topic or type custom --</option>
+                    {NEWS_QUERIES.map((query, idx) => (
+                      <option key={idx} value={query}>{query}</option>
+                    ))}
+                  </select>
+                </div>
                 <input 
                   value={newsQuery} 
                   onChange={e=>setNewsQuery(e.target.value)} 
-                  placeholder="e.g., global stock market latest news"
+                  placeholder="Or type your custom search query..."
                   style={{ width:"100%", padding:"11px 14px", fontSize:14 }}
                 />
-                <div style={{ fontSize:11, color:"#64748b", marginTop:4 }}>AI will search for latest news matching this query</div>
+                <div style={{ fontSize:11, color:"#64748b", marginTop:4 }}>Select from dropdown or type custom query for AI to generate relevant posts</div>
               </div>
 
               <div style={{ display:"flex", gap:10 }}>
@@ -499,13 +663,13 @@ Write ONLY the JSON object, no other text.`);
                 </div>
               )}
 
-              <div style={{ marginTop:20, padding:16, borderRadius:10, background:"rgba(251,191,36,0.06)", border:"1px solid rgba(251,191,36,0.2)" }}>
-                <div style={{ fontSize:12, color:"#fbbf24", fontWeight:700, marginBottom:8 }}>💡 How it works:</div>
+              <div style={{ marginTop:20, padding:16, borderRadius:10, background:"rgba(34,197,94,0.06)", border:"1px solid rgba(34,197,94,0.2)" }}>
+                <div style={{ fontSize:12, color:"#22c55e", fontWeight:700, marginBottom:8 }}>✨ Automatic Posting Enabled:</div>
                 <div style={{ fontSize:12, color:"#94a3b8", lineHeight:1.6 }}>
-                  1. AI searches for latest financial news based on your query<br/>
-                  2. Generates a professional LinkedIn post about the news<br/>
-                  3. Naturally explains how Dhanalyser helps investors act on this information<br/>
-                  4. Adds relevant hashtags and call-to-action
+                  1. AI generates professional LinkedIn posts about market trends<br/>
+                  2. Posts are automatically scheduled to the server queue<br/>
+                  3. Server posts them to LinkedIn at the scheduled time (no manual action needed)<br/>
+                  4. Includes Dhanalyser Community features when contextually relevant
                 </div>
               </div>
             </div>
@@ -540,19 +704,39 @@ Write ONLY the JSON object, no other text.`);
                         <span style={{ color:statusColor[post.status], fontWeight:600, textTransform:"uppercase" }}>● {post.status}</span>
                       </div>
                     </div>
-                    <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                    <div style={{ display:"flex", gap:6, flexShrink:0, flexWrap:"wrap" }}>
                       <button className="btn-ghost" style={{ padding:"4px 10px", fontSize:11 }}
                         onClick={e=>{e.stopPropagation();copyPost(post);}}>📋</button>
+                      
                       {post.status!=="posted" && (
                         <>
+                          <button className="btn-ghost" style={{ padding:"4px 10px", fontSize:11, color:"#60a5fa" }}
+                            onClick={e=>{e.stopPropagation();startEditPost(post);}}>✏️ Edit</button>
+                          <button className="btn-ghost" style={{ padding:"4px 10px", fontSize:11, color:"#ef4444" }}
+                            onClick={e=>{e.stopPropagation();deletePost(post.id);}}>🗑️</button>
+                        </>
+                      )}
+                      
+                      {post.status==="scheduled" && (
+                        <div style={{ padding:"4px 10px", fontSize:10, color:"#22c55e", background:"rgba(34,197,94,0.1)", borderRadius:6, fontWeight:600 }}>
+                          ✓ Auto-posting at {post.scheduledTime}
+                        </div>
+                      )}
+                      {post.status==="draft" && (
+                        <>
                           <button className="btn-ghost" style={{ padding:"4px 10px", fontSize:11, color:"#fbbf24" }}
-                            onClick={e=>{e.stopPropagation();schedulePost(post);}}>🕐 Schedule</button>
+                            onClick={e=>{e.stopPropagation();schedulePost(post);showToast(`Scheduled for ${post.scheduledDay} ${post.scheduledTime} ✅`);}}>🕐 Schedule</button>
                           <button className="btn-primary" disabled={posting===post.id}
                             style={{ padding:"4px 12px", fontSize:11 }}
                             onClick={e=>{e.stopPropagation();postNow(post);}}>
                             {posting===post.id?"⏳":"🚀 Post Now"}
                           </button>
                         </>
+                      )}
+                      {post.status==="posted" && (
+                        <div style={{ padding:"4px 10px", fontSize:10, color:"#22c55e", background:"rgba(34,197,94,0.15)", borderRadius:6, fontWeight:600 }}>
+                          ✓ Posted
+                        </div>
                       )}
                     </div>
                   </div>
@@ -566,9 +750,66 @@ Write ONLY the JSON object, no other text.`);
                           {post.news.source && <div style={{ fontSize:10, color:"#64748b", marginTop:4 }}>Source: {post.news.source}</div>}
                         </div>
                       )}
-                      <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:10, padding:14, fontSize:13, lineHeight:1.75, color:"#cbd5e1", whiteSpace:"pre-wrap", marginBottom:10 }}>
-                        {post.full_post || (post.hook + "\n\n" + post.body + "\n\n" + post.cta + "\n\n" + post.hashtags)}
-                      </div>
+                      
+                      {editingPost === post.id ? (
+                        <div style={{ background:"rgba(37,99,235,0.05)", borderRadius:10, padding:14, marginBottom:10 }}>
+                          <div style={{ fontSize:12, color:"#60a5fa", fontWeight:600, marginBottom:10 }}>✏️ Edit Post</div>
+                          
+                          <div style={{ marginBottom:10 }}>
+                            <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, display:"block", marginBottom:4 }}>HOOK</label>
+                            <input 
+                              value={editContent.hook || ''} 
+                              onChange={e=>setEditContent({...editContent, hook:e.target.value})}
+                              style={{ width:"100%", padding:"8px 10px", fontSize:13 }}
+                            />
+                          </div>
+                          
+                          <div style={{ marginBottom:10 }}>
+                            <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, display:"block", marginBottom:4 }}>BODY</label>
+                            <textarea 
+                              value={editContent.body || ''} 
+                              onChange={e=>setEditContent({...editContent, body:e.target.value})}
+                              rows={3}
+                              style={{ width:"100%", padding:"8px 10px", fontSize:13, resize:"vertical" }}
+                            />
+                          </div>
+                          
+                          <div style={{ marginBottom:10 }}>
+                            <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, display:"block", marginBottom:4 }}>CTA (Call to Action)</label>
+                            <textarea 
+                              value={editContent.cta || ''} 
+                              onChange={e=>setEditContent({...editContent, cta:e.target.value})}
+                              rows={2}
+                              style={{ width:"100%", padding:"8px 10px", fontSize:13, resize:"vertical" }}
+                            />
+                          </div>
+                          
+                          <div style={{ marginBottom:10 }}>
+                            <label style={{ fontSize:11, color:"#94a3b8", fontWeight:600, display:"block", marginBottom:4 }}>HASHTAGS</label>
+                            <input 
+                              value={editContent.hashtags || ''} 
+                              onChange={e=>setEditContent({...editContent, hashtags:e.target.value})}
+                              style={{ width:"100%", padding:"8px 10px", fontSize:13 }}
+                            />
+                          </div>
+                          
+                          <div style={{ display:"flex", gap:8 }}>
+                            <button className="btn-primary" onClick={()=>saveEdit(post.id)}
+                              style={{ flex:1, padding:"8px 0", fontSize:13 }}>
+                              💾 Save Changes
+                            </button>
+                            <button className="btn-ghost" onClick={cancelEdit}
+                              style={{ padding:"8px 16px", fontSize:13 }}>
+                              ✖️ Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:10, padding:14, fontSize:13, lineHeight:1.75, color:"#cbd5e1", whiteSpace:"pre-wrap", marginBottom:10 }}>
+                          {post.full_post || (post.hook + "\n\n" + post.body + "\n\n" + post.cta + "\n\n" + post.hashtags)}
+                        </div>
+                      )}
+                      
                       {post.image_prompt && (
                         <div style={{ background:"rgba(251,191,36,0.08)", border:"1px solid rgba(251,191,36,0.2)", borderRadius:8, padding:"7px 12px", fontSize:11, color:"#fbbf24", marginBottom:8 }}>
                           🎨 Image: {post.image_prompt}
