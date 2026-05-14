@@ -7,6 +7,7 @@ const express = require("express");
 const cors = require("cors");
 const cron = require("node-cron");
 const axios = require("axios");
+const { kv } = require("@vercel/kv");
 
 const app = express();
 app.use(cors());
@@ -14,9 +15,9 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
 
-// ─── In-memory post queue ────────────────────────────────────────────────────
-let postQueue = []; // { id, content, scheduledDay, scheduledTime, status }
-let postHistory = [];
+// ─── Database Keys ───────────────────────────────────────────────────────────
+const KV_QUEUE_KEY = "dhanalyer_post_queue";
+const KV_HISTORY_KEY = "dhanalyer_post_history";
 
 // ─── LinkedIn Post Function ──────────────────────────────────────────────────
 async function postToLinkedIn(content) {
@@ -317,22 +318,35 @@ app.get("/api/cron", async (req, res) => {
   const dayName = days[now.getUTCDay()];
 
   console.log(`⏰ Vercel Cron triggered — Day: ${dayName}, Time: ${now.toISOString()}`);
-  console.log("CURRENT QUEUE:", JSON.stringify(postQueue));
-
-  const pending = postQueue.find(p => p.scheduledDay === dayName && p.status === "pending");
   
-  if (!pending) {
+  // Get queue from database
+  let postQueue = await kv.get(KV_QUEUE_KEY) || [];
+  console.log("CURRENT QUEUE FROM DB:", JSON.stringify(postQueue));
+
+  const pendingIdx = postQueue.findIndex(p => p.scheduledDay === dayName && p.status === "pending");
+  
+  if (pendingIdx === -1) {
     console.log(`📭 No pending post found for ${dayName}`);
     return res.json({ message: `No pending post for ${dayName}`, time: now.toISOString(), queueSize: postQueue.length });
   }
 
+  const pending = postQueue[pendingIdx];
+
   try {
     const result = await postToLinkedIn(pending.content);
+    
+    // Update status and move to history
     pending.status = "posted";
     pending.postedAt = now.toISOString();
     pending.linkedinId = result.id;
-    postHistory.push({ ...pending });
-    postQueue = postQueue.filter(p => p.id !== pending.id);
+    
+    // Update DB: Remove from queue, add to history
+    const history = await kv.get(KV_HISTORY_KEY) || [];
+    history.push({ ...pending });
+    await kv.set(KV_HISTORY_KEY, history);
+    
+    postQueue.splice(pendingIdx, 1);
+    await kv.set(KV_QUEUE_KEY, postQueue);
     
     return res.json({ 
       success: true, 
@@ -342,16 +356,18 @@ app.get("/api/cron", async (req, res) => {
   } catch (err) {
     pending.status = "failed";
     pending.error = err.message;
+    await kv.set(KV_QUEUE_KEY, postQueue); // Save failure status to DB
     return res.status(500).json({ error: err.message });
   }
 });
 
 // Add post to queue
-app.post("/api/queue", (req, res) => {
+app.post("/api/queue", async (req, res) => {
   const { content, scheduledDay, scheduledTime } = req.body;
   if (!content || !scheduledDay) {
     return res.status(400).json({ error: "content and scheduledDay are required" });
   }
+  
   const post = {
     id: Date.now().toString(),
     content,
@@ -360,19 +376,30 @@ app.post("/api/queue", (req, res) => {
     status: "pending",
     createdAt: new Date().toISOString(),
   };
-  postQueue.push(post);
-  console.log(`📥 Post queued for ${scheduledDay}`);
-  res.json({ success: true, post });
+
+  try {
+    let postQueue = await kv.get(KV_QUEUE_KEY) || [];
+    postQueue.push(post);
+    await kv.set(KV_QUEUE_KEY, postQueue);
+    
+    console.log(`📥 Post queued in DB for ${scheduledDay}`);
+    res.json({ success: true, post });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to save to database" });
+  }
 });
 
 // Get all queued posts
-app.get("/api/queue", (req, res) => {
-  res.json({ queue: postQueue });
+app.get("/api/queue", async (req, res) => {
+  const queue = await kv.get(KV_QUEUE_KEY) || [];
+  res.json({ queue });
 });
 
 // Delete from queue
-app.delete("/api/queue/:id", (req, res) => {
+app.delete("/api/queue/:id", async (req, res) => {
+  let postQueue = await kv.get(KV_QUEUE_KEY) || [];
   postQueue = postQueue.filter(p => p.id !== req.params.id);
+  await kv.set(KV_QUEUE_KEY, postQueue);
   res.json({ success: true });
 });
 
@@ -389,7 +416,11 @@ app.post("/api/post-now", async (req, res) => {
       postedAt: new Date().toISOString(),
       linkedinId: result.id,
     };
-    postHistory.push(record);
+    
+    const history = await kv.get(KV_HISTORY_KEY) || [];
+    history.push(record);
+    await kv.set(KV_HISTORY_KEY, history);
+    
     res.json({ success: true, linkedinId: result.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -397,8 +428,9 @@ app.post("/api/post-now", async (req, res) => {
 });
 
 // Get post history
-app.get("/api/history", (req, res) => {
-  res.json({ history: postHistory });
+app.get("/api/history", async (req, res) => {
+  const history = await kv.get(KV_HISTORY_KEY) || [];
+  res.json({ history });
 });
 
 // ─── Start server ─────────────────────────────────────────────────────────────
