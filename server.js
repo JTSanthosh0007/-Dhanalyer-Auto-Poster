@@ -343,13 +343,14 @@ app.get("/api/cron", async (req, res) => {
   if (!pending) {
     console.log(`🤖 Queue empty for ${dayName}. Triggering AUTO-GENERATE...`);
     try {
-      const prompt = `Write a LinkedIn post for Dhanalyser (fintech). Start with 📰, then 😟, then 💡, then 🚀, then 📲. Include #Dhanalyser and 5-7 finance hashtags. Focus on today's Indian market news. Write exactly 200 words. JSON format: {"full_post": "..."}`;
+      const prompt = "Write a short LinkedIn post about Indian stock market trends today.";
       
-      console.log("Using API_KEY:", process.env.API_KEY ? "EXISTS" : "MISSING");
+      const key = process.env.API_KEY || process.env.GEMINI_API_KEY;
+      console.log("Using API_KEY:", key ? "EXISTS" : "MISSING");
       
-      // Use the simplest possible endpoint that is guaranteed to exist
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.API_KEY}`;
-      console.log("DEBUG: Calling AI URL:", apiUrl.replace(process.env.API_KEY, "HIDDEN_KEY"));
+      // Using gemini-1.5-flash as it's the most reliable across regions currently
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+      console.log("DEBUG: Calling AI URL:", apiUrl.replace(key, "HIDDEN_KEY"));
 
       const aiResponse = await axios.post(apiUrl, {
         contents: [{ parts: [{ text: prompt }] }]
