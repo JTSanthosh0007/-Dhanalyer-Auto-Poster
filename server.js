@@ -345,8 +345,12 @@ app.get("/api/cron", async (req, res) => {
     try {
       const prompt = `Write a LinkedIn post for Dhanalyser (fintech). Start with 📰, then 😟, then 💡, then 🚀, then 📲. Include #Dhanalyser and 5-7 finance hashtags. Focus on today's Indian market news. Write exactly 200 words. JSON format: {"full_post": "..."}`;
       
-      const aiResponse = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.API_KEY}`, {
-        params: { contents: [{ parts: [{ text: prompt }] }] }
+      console.log("Using API_KEY:", process.env.API_KEY ? "EXISTS" : "MISSING");
+      
+      const aiResponse = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.API_KEY}`, {
+        contents: [{ parts: [{ text: prompt }] }]
+      }, {
+        headers: { "Content-Type": "application/json" }
       });
 
       let content = aiResponse.data.candidates[0].content.parts[0].text;
