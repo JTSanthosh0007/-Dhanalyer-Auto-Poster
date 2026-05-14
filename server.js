@@ -7,7 +7,13 @@ const express = require("express");
 const cors = require("cors");
 const cron = require("node-cron");
 const axios = require("axios");
-const { kv } = require("@vercel/kv");
+const { createClient } = require("@vercel/kv");
+
+// Initialize KV with environment variables (Vercel automatically provides KV_REST_API_URL and KV_REST_API_TOKEN)
+const kv = createClient({
+  url: process.env.KV_REST_API_URL || process.env.KV_URL_KV_REST_API_URL,
+  token: process.env.KV_REST_API_TOKEN || process.env.KV_URL_KV_REST_API_TOKEN,
+});
 
 const app = express();
 app.use(cors());
