@@ -302,8 +302,13 @@ app.get("/api/health", (req, res) => {
 
 // Vercel Cron Handler
 app.get("/api/cron", async (req, res) => {
-  const authHeader = req.headers.get?.('authorization');
+  console.log("CRON ENDPOINT HIT - HEADERS:", JSON.stringify(req.headers));
+  
+  const authHeader = req.headers['authorization'];
+  console.log("AUTH HEADER RECEIVED:", authHeader);
+  
   if (process.env.VERCEL_ENV === 'production' && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    console.log("CRON UNAUTHORIZED - EXPECTED:", `Bearer ${process.env.CRON_SECRET}`);
     return res.status(401).end('Unauthorized');
   }
 
@@ -312,11 +317,13 @@ app.get("/api/cron", async (req, res) => {
   const dayName = days[now.getUTCDay()];
 
   console.log(`⏰ Vercel Cron triggered — Day: ${dayName}, Time: ${now.toISOString()}`);
+  console.log("CURRENT QUEUE:", JSON.stringify(postQueue));
 
   const pending = postQueue.find(p => p.scheduledDay === dayName && p.status === "pending");
   
   if (!pending) {
-    return res.json({ message: `No pending post for ${dayName}`, time: now.toISOString() });
+    console.log(`📭 No pending post found for ${dayName}`);
+    return res.json({ message: `No pending post for ${dayName}`, time: now.toISOString(), queueSize: postQueue.length });
   }
 
   try {
