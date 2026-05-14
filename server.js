@@ -330,51 +330,66 @@ app.get("/api/cron", async (req, res) => {
   let postQueue;
   try {
     postQueue = await kv.get(KV_QUEUE_KEY);
-    // Handle cases where KV might return a string instead of object
     if (typeof postQueue === 'string') postQueue = JSON.parse(postQueue);
     if (!postQueue) postQueue = [];
   } catch (e) {
     console.error("Database Read Error:", e);
-    return res.status(500).json({ error: "Database Read Error", details: e.message });
+    return res.status(500).json({ error: "Database Read Error" });
   }
 
-  console.log("CURRENT QUEUE FROM DB:", JSON.stringify(postQueue));
-
-  const pendingIdx = postQueue.findIndex(p => p.scheduledDay === dayName && p.status === "pending");
+  let pending = postQueue.find(p => p.scheduledDay === dayName && p.status === "pending");
   
-  if (pendingIdx === -1) {
-    console.log(`📭 No pending post found for ${dayName}`);
-    return res.json({ message: `No pending post for ${dayName}`, time: now.toISOString(), queueSize: postQueue.length });
-  }
+  // ─── AUTO-GENERATE IF QUEUE IS EMPTY ───
+  if (!pending) {
+    console.log(`🤖 Queue empty for ${dayName}. Triggering AUTO-GENERATE...`);
+    try {
+      const prompt = `Write a LinkedIn post for Dhanalyser (fintech). Start with 📰, then 😟, then 💡, then 🚀, then 📲. Include #Dhanalyser and 5-7 finance hashtags. Focus on today's Indian market news. Write exactly 200 words. JSON format: {"full_post": "..."}`;
+      
+      const aiResponse = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.API_KEY}`, {
+        params: { contents: [{ parts: [{ text: prompt }] }] }
+      });
 
-  const pending = postQueue[pendingIdx];
+      let content = aiResponse.data.candidates[0].content.parts[0].text;
+      try {
+        const jsonMatch = content.match(/\{.*\}/s);
+        if (jsonMatch) content = JSON.parse(jsonMatch[0]).full_post;
+      } catch (e) {
+        // Use raw text if JSON parsing fails
+      }
+
+      pending = {
+        id: "auto_" + Date.now(),
+        content: content,
+        scheduledDay: dayName,
+        status: "pending"
+      };
+      console.log("✅ Auto-generated post content successfully.");
+    } catch (aiErr) {
+      console.error("❌ Auto-generate failed:", aiErr.message);
+      return res.status(500).json({ error: "Auto-generate failed", details: aiErr.message });
+    }
+  }
 
   try {
+    console.log(`🚀 Posting to LinkedIn for ${dayName}...`);
     const result = await postToLinkedIn(pending.content);
     
-    // Update status and move to history
-    pending.status = "posted";
-    pending.postedAt = now.toISOString();
-    pending.linkedinId = result.id;
-    
-    // Update DB: Remove from queue, add to history
+    // Update DB
     let history = await kv.get(KV_HISTORY_KEY) || [];
     if (typeof history === 'string') history = JSON.parse(history);
-    history.push({ ...pending });
+    history.push({ ...pending, status: "posted", postedAt: now.toISOString(), linkedinId: result.id });
     await kv.set(KV_HISTORY_KEY, history);
     
-    postQueue.splice(pendingIdx, 1);
-    await kv.set(KV_QUEUE_KEY, postQueue);
+    const updatedQueue = postQueue.filter(p => p.id !== pending.id);
+    await kv.set(KV_QUEUE_KEY, updatedQueue);
     
     return res.json({ 
       success: true, 
-      message: `Posted successfully for ${dayName}`, 
+      message: `Auto-generated and posted successfully for ${dayName}`, 
       linkedinId: result.id 
     });
   } catch (err) {
-    pending.status = "failed";
-    pending.error = err.message;
-    await kv.set(KV_QUEUE_KEY, postQueue); // Save failure status to DB
+    console.error(`❌ Final Posting Failed: ${err.message}`);
     return res.status(500).json({ error: err.message });
   }
 });
