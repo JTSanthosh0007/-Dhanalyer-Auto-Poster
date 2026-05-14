@@ -354,11 +354,17 @@ app.get("/api/cron", async (req, res) => {
       });
 
       let content = aiResponse.data.candidates[0].content.parts[0].text;
+      console.log("AI RAW RESPONSE:", content);
+
       try {
-        const jsonMatch = content.match(/\{.*\}/s);
-        if (jsonMatch) content = JSON.parse(jsonMatch[0]).full_post;
+        // Clean the response if it's wrapped in markdown code blocks
+        const cleanedContent = content.replace(/```json|```/g, "").trim();
+        const jsonMatch = cleanedContent.match(/\{.*\}/s);
+        if (jsonMatch) {
+          content = JSON.parse(jsonMatch[0]).full_post;
+        }
       } catch (e) {
-        // Use raw text if JSON parsing fails
+        console.log("JSON Parse fallback - using raw content");
       }
 
       pending = {
@@ -369,8 +375,12 @@ app.get("/api/cron", async (req, res) => {
       };
       console.log("✅ Auto-generated post content successfully.");
     } catch (aiErr) {
-      console.error("❌ Auto-generate failed:", aiErr.message);
-      return res.status(500).json({ error: "Auto-generate failed", details: aiErr.message });
+      console.error("❌ AI API ERROR:", aiErr.response?.data || aiErr.message);
+      return res.status(500).json({ 
+        error: "Auto-generate failed", 
+        details: aiErr.message,
+        apiUrl: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent`
+      });
     }
   }
 
