@@ -347,8 +347,11 @@ app.get("/api/cron", async (req, res) => {
       
       console.log("Using API_KEY:", process.env.API_KEY ? "EXISTS" : "MISSING");
       
-      // Try gemini-pro which is the most stable endpoint name
-      const aiResponse = await axios.post(`https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${process.env.API_KEY}`, {
+      // Use the simplest possible endpoint that is guaranteed to exist
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${process.env.API_KEY}`;
+      console.log("DEBUG: Calling AI URL:", apiUrl.replace(process.env.API_KEY, "HIDDEN_KEY"));
+
+      const aiResponse = await axios.post(apiUrl, {
         contents: [{ parts: [{ text: prompt }] }]
       }, {
         headers: { "Content-Type": "application/json" }
