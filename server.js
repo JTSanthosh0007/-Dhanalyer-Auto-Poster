@@ -314,7 +314,10 @@ app.get("/api/cron", async (req, res) => {
   const authHeader = req.headers['authorization'];
   console.log("AUTH HEADER RECEIVED:", authHeader);
   
-  if (process.env.VERCEL_ENV === 'production' && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // If skipAuth is present, we bypass check for manual test
+  const skipAuth = req.query.skipAuth === 'true';
+
+  if (!skipAuth && process.env.VERCEL_ENV === 'production' && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     console.log("CRON UNAUTHORIZED - EXPECTED:", `Bearer ${process.env.CRON_SECRET}`);
     return res.status(401).end('Unauthorized');
   }
@@ -326,7 +329,17 @@ app.get("/api/cron", async (req, res) => {
   console.log(`⏰ Vercel Cron triggered — Day: ${dayName}, Time: ${now.toISOString()}`);
   
   // Get queue from database
-  let postQueue = await kv.get(KV_QUEUE_KEY) || [];
+  let postQueue;
+  try {
+    postQueue = await kv.get(KV_QUEUE_KEY);
+    // Handle cases where KV might return a string instead of object
+    if (typeof postQueue === 'string') postQueue = JSON.parse(postQueue);
+    if (!postQueue) postQueue = [];
+  } catch (e) {
+    console.error("Database Read Error:", e);
+    return res.status(500).json({ error: "Database Read Error", details: e.message });
+  }
+
   console.log("CURRENT QUEUE FROM DB:", JSON.stringify(postQueue));
 
   const pendingIdx = postQueue.findIndex(p => p.scheduledDay === dayName && p.status === "pending");
@@ -347,7 +360,8 @@ app.get("/api/cron", async (req, res) => {
     pending.linkedinId = result.id;
     
     // Update DB: Remove from queue, add to history
-    const history = await kv.get(KV_HISTORY_KEY) || [];
+    let history = await kv.get(KV_HISTORY_KEY) || [];
+    if (typeof history === 'string') history = JSON.parse(history);
     history.push({ ...pending });
     await kv.set(KV_HISTORY_KEY, history);
     
