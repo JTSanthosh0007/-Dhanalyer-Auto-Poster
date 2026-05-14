@@ -311,14 +311,12 @@ app.get("/api/health", (req, res) => {
 app.get("/api/cron", async (req, res) => {
   console.log("CRON ENDPOINT HIT - HEADERS:", JSON.stringify(req.headers));
   
-  const authHeader = req.headers['authorization'];
-  console.log("AUTH HEADER RECEIVED:", authHeader);
-  
   // If skipAuth is present, we bypass check for manual test
   const skipAuth = req.query.skipAuth === 'true';
+  const authHeader = req.headers['authorization'];
 
   if (!skipAuth && process.env.VERCEL_ENV === 'production' && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    console.log("CRON UNAUTHORIZED - EXPECTED:", `Bearer ${process.env.CRON_SECRET}`);
+    console.log("CRON UNAUTHORIZED");
     return res.status(401).end('Unauthorized');
   }
 
