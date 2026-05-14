@@ -130,18 +130,21 @@ const CRON_SCHEDULE = {
 };
 
 // ─── Register all cron jobs ──────────────────────────────────────────────────
+console.log("Initializing cron jobs...");
 Object.entries(CRON_SCHEDULE).forEach(([day, cronExpr]) => {
+  console.log(`Setting up cron for ${day}: ${cronExpr}`);
   cron.schedule(cronExpr, async () => {
-    console.log(`⏰ [${day}] Cron triggered — checking queue...`);
+    const now = new Date();
+    console.log(`⏰ [${day}] Cron triggered at ${now.toISOString()} — checking queue...`);
 
     const pending = postQueue.find(p => p.scheduledDay === day && p.status === "pending");
     if (!pending) {
-      console.log(`📭 No pending post for ${day}`);
+      console.log(`📭 No pending post found in queue for ${day}. Queue size: ${postQueue.length}`);
       return;
     }
 
     try {
-      console.log(`🚀 Posting to LinkedIn for ${day}...`);
+      console.log(`🚀 Posting to LinkedIn for ${day}: "${pending.content.substring(0, 50)}..."`);
       const result = await postToLinkedIn(pending.content);
       pending.status = "posted";
       pending.postedAt = new Date().toISOString();
@@ -152,12 +155,20 @@ Object.entries(CRON_SCHEDULE).forEach(([day, cronExpr]) => {
     } catch (err) {
       pending.status = "failed";
       pending.error = err.message;
-      console.error(`❌ Failed to post: ${err.message}`);
+      console.error(`❌ Failed to post for ${day}: ${err.message}`);
     }
   }, { timezone: "UTC" });
 });
 
-console.log("✅ All 5 cron jobs registered (Mon–Fri IST schedule)");
+// Add a minute-by-minute heartbeat to verify cron is alive
+cron.schedule("* * * * *", () => {
+  const now = new Date();
+  if (now.getUTCMinutes() % 60 === 0) { // Log every hour to avoid spam
+     console.log(`💓 Heartbeat: Cron system is active. UTC: ${now.toISOString()}`);
+  }
+});
+
+console.log("✅ All cron jobs registered and active.");
 
 // ─── AI API Proxy (to avoid CORS issues) ─────────────────────────────────────
 app.post("/api/generate", async (req, res) => {
@@ -287,6 +298,45 @@ app.get("/api/health", (req, res) => {
     time: new Date().toISOString(),
     linkedinConfigured: !!(process.env.LINKEDIN_ACCESS_TOKEN && process.env.LINKEDIN_PERSON_URN),
   });
+});
+
+// Vercel Cron Handler
+app.get("/api/cron", async (req, res) => {
+  const authHeader = req.headers.get?.('authorization');
+  if (process.env.VERCEL_ENV === 'production' && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return res.status(401).end('Unauthorized');
+  }
+
+  const now = new Date();
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const dayName = days[now.getUTCDay()];
+
+  console.log(`⏰ Vercel Cron triggered — Day: ${dayName}, Time: ${now.toISOString()}`);
+
+  const pending = postQueue.find(p => p.scheduledDay === dayName && p.status === "pending");
+  
+  if (!pending) {
+    return res.json({ message: `No pending post for ${dayName}`, time: now.toISOString() });
+  }
+
+  try {
+    const result = await postToLinkedIn(pending.content);
+    pending.status = "posted";
+    pending.postedAt = now.toISOString();
+    pending.linkedinId = result.id;
+    postHistory.push({ ...pending });
+    postQueue = postQueue.filter(p => p.id !== pending.id);
+    
+    return res.json({ 
+      success: true, 
+      message: `Posted successfully for ${dayName}`, 
+      linkedinId: result.id 
+    });
+  } catch (err) {
+    pending.status = "failed";
+    pending.error = err.message;
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 // Add post to queue
